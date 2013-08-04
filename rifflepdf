@@ -1,0 +1,195 @@
+#!/bin/sh
+
+########################################################################
+## By using pdftk
+########################################################################
+function with_pdftk {
+  source_pdf="$1"
+  output_pdf="$2"
+
+  pdftk_source_alias="A"
+  pdftk_blank_alias="B"
+
+  pdf_page=(`pdftk "$source_pdf" dump_data | grep NumberOfPages`);
+  pdf_page=${pdf_page[1]}
+
+  args=""
+  four_roof=$(( $pdf_page % 4 == 0 ? $pdf_page / 4 : $pdf_page / 4 + 1 ))
+  output_page=$(( $pdf_page % 4 == 0 ? $pdf_page  : $pdf_page / 4 * 4 + 4 ))
+  for i in `seq 1 $four_roof`; do
+    front0=$(( ($i - 1) * 2 + 1));
+    front1=$(( $front0 + 1 ))
+    last0=$(( $output_page - $front0 + 1 ))
+    last1=$(( $output_page - $front1 + 1 ))
+    if [ $last0 -gt $pdf_page ]; then 
+      args=$args"${pdftk_blank_alias}1 "
+    else
+      args=$args"${pdftk_source_alias}$last0 "
+    fi
+    args=$args"${pdftk_source_alias}$front0 "
+    args=$args"${pdftk_source_alias}$front1 "
+    if [ $last1 -gt $pdf_page ]; then 
+      args=$args"${pdftk_blank_alias}1 "
+    else
+      args=$args"${pdftk_source_alias}$last1 "
+    fi
+  done
+  pdftk "$pdftk_source_alias"="$source_pdf" "$pdftk_blank_alias"="$blank_pdf" \
+    cat $args output "$output_pdf"
+}
+
+########################################################################
+## By using poppler
+########################################################################
+function with_poppler {
+  source_pdf="$1"
+  output_pdf="$2"
+  temporary_pdfs="$tmp_dir"/`basename "$source_pdf" .pdf`.%d.pdf
+
+  pdf_page=(`pdfinfo "$source_pdf" | grep Pages`)
+  pdf_page=${pdf_page[1]}
+
+  pdfseparate "$source_pdf" "$temporary_pdfs"
+
+  args=""
+  four_roof=$(( $pdf_page % 4 == 0 ? $pdf_page / 4 : $pdf_page / 4 + 1 ))
+  output_page=$(( $pdf_page % 4 == 0 ? $pdf_page  : $pdf_page / 4 * 4 + 4 ))
+  for i in `seq 1 $four_roof`; do
+    front0=$(( ($i - 1) * 2 + 1));
+    front1=$(( $front0 + 1 ))
+    last0=$(( $output_page - $front0 + 1 ))
+    last1=$(( $output_page - $front1 + 1 ))
+    if [ $last0 -gt $pdf_page ]; then 
+      args=$args"$blank_pdf "
+    else
+      args=$args`printf "$temporary_pdfs " $last0`
+    fi
+    args=$args`printf "$temporary_pdfs " $front0`
+    args=$args`printf "$temporary_pdfs " $front1`
+    if [ $last1 -gt $pdf_page ]; then 
+      args=$args"$blank_pdf "
+    else
+      args=$args`printf "$temporary_pdfs " $last1`
+    fi
+  done
+  pdfunite $args "$output_pdf"
+}
+
+########################################################################
+## Create Blank PDF
+########################################################################
+function create_blank {
+  echo "\
+%PDF-1.4
+6 0 obj endobj
+4 0 obj <</Type/Page/MediaBox [0 0 612 792] /Parent 3 0 R >> endobj
+3 0 obj << /Type /Pages /Kids [ 4 0 R ] /Count 1 >> endobj
+1 0 obj <</Type /Catalog /Pages 3 0 R /Metadata 7 0 R >> endobj
+7 0 obj endobj
+2 0 obj endobj
+xref
+0 8
+0000000000 65535 f 
+0000000299 00000 n 
+0000001783 00000 n 
+0000000240 00000 n 
+0000000126 00000 n 
+0000000015 00000 n 
+0000000108 00000 n 
+0000000363 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R /Info 2 0 R >>
+startxref
+%%EOF" > "$1"
+}
+
+########################################################################
+## Destructor
+########################################################################
+function destructor {
+rm -rf "$tmp_dir"
+}
+
+########################################################################
+## Print Usage
+########################################################################
+function print_usage {
+  echo >&2 "Usage: $0 -o output.pdf [-m pdftk|poppler] input.pdf"
+}
+
+
+########################################################################
+## Print Requirement
+########################################################################
+function print_requirement {
+  echo >&2 "Error: you need to install pdftk or poppler command line tools"
+}
+
+########################################################################
+## Print Backend is not supported
+########################################################################
+function print_backend_is_not_supported {
+  echo >&2 "You specified PDF processer as '$1', but '$1' is not supported"
+}
+########################################################################
+## Print Backend is Not installed
+########################################################################
+function print_backend_is_not_installed {
+  echo >&2 "You specified PDF processer as '$1', but '$1' is not installed"
+}
+
+########################################################################
+## Start of
+########################################################################
+trap "destructor; exit 1" 2
+
+generated_files="$blank_pdf"
+tmp_dir=`mktemp -d`
+blank_pdf="${tmp_dir}/blank.pdf"
+
+while getopts "o:m:" flag; do
+  case $flag in
+  \?) opt_error=1;;
+  o) output_pdf="$OPTARG" ;;
+  m) pdf_backend="$OPTARG" ;;
+  esac
+done
+shift $(( $OPTIND - 1 ))
+input_pdf="$*"
+
+if [ $OPT_ERROR ] || [ -z "$input_pdf" ] || [ -z "$output_pdf" ]; then
+  print_usage
+  exit 1
+fi
+
+create_blank "$blank_pdf"
+
+if test -z "$pdf_backend" ; then
+  if which pdftk >/dev/null 2>&1; then
+    with_pdftk "$input_pdf" "$output_pdf"
+  elif which pdfinfo pdfseparate pdfunite >/dev/null 2>&1; then
+    with_poppler "$input_pdf" "$output_pdf"
+  else
+    print_requirement
+    return 1
+  fi
+elif [ "$pdf_backend" = "pdftk" ] ; then
+  if which pdftk >/dev/null 2>&1; then
+    with_pdftk "$input_pdf" "$output_pdf"
+  else
+    print_backend_is_not_installed $pdf_backend
+    exit 1
+  fi
+elif [ "$pdf_backend" = "poppler" ]; then
+  if which pdfinfo pdfseparate pdfunite >/dev/null 2>&1; then
+    with_poppler "$input_pdf" "$output_pdf"
+  else
+    print_backend_is_not_installed $pdf_backend
+    return 1
+  fi
+else
+  print_backend_is_not_supported $pdf_backend
+  exit 1
+fi
+
+destructor
