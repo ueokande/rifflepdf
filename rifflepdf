@@ -143,7 +143,6 @@ function print_backend_is_not_installed {
 ########################################################################
 trap "destructor; exit 1" 2
 
-generated_files="$blank_pdf"
 tmp_dir=`mktemp -d`
 blank_pdf="${tmp_dir}/blank.pdf"
 
